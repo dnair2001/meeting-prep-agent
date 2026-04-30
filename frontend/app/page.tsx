@@ -7,6 +7,7 @@ export default function Home() {
     const data = await res.json();
     window.location.href = data.auth_url;
   }
+  console.log("API URL at render:", process.env.NEXT_PUBLIC_API_URL);
 
   return (
     <div style={{ display: "flex", minHeight: "100vh", background: "#0C0C0F", color: "#F0EDE8", fontFamily: "'DM Sans', sans-serif", overflow: "hidden" }}>
