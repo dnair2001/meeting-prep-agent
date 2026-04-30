@@ -47,7 +47,7 @@ export default function MeetingsPage() {
   const [fetchingMeetings, setFetchingMeetings] = useState(true);
 
   useEffect(() => {
-    fetch("${process.env.NEXT_PUBLIC_API_URL}/meetings")
+    fetch(`${process.env.NEXT_PUBLIC_API_URL}/meetings`)
       .then((r) => r.json())
       .then((d) => {
         if (d.meetings) setMeetings(d.meetings);
