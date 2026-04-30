@@ -47,7 +47,7 @@ export default function MeetingsPage() {
   const [fetchingMeetings, setFetchingMeetings] = useState(true);
 
   useEffect(() => {
-    fetch("http://localhost:8000/meetings")
+    fetch("${process.env.NEXT_PUBLIC_API_URL}/meetings")
       .then((r) => r.json())
       .then((d) => {
         if (d.meetings) setMeetings(d.meetings);
@@ -59,7 +59,7 @@ export default function MeetingsPage() {
     setSelected(meeting);
     setBrief("");
     setLoading(true);
-    const res = await fetch(`http://localhost:8000/meetings/${meeting.id}/brief`, { method: "POST" });
+    const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/meetings/${meeting.id}/brief`, { method: "POST" });
     const data = await res.json();
     setBrief(data.brief);
     setLoading(false);

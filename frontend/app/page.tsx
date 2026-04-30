@@ -2,7 +2,7 @@
 
 export default function Home() {
   async function handleLogin() {
-    const res = await fetch("http://localhost:8000/auth/login");
+    const res = await fetch("${process.env.NEXT_PUBLIC_API_URL}/auth/login");
     const data = await res.json();
     window.location.href = data.auth_url;
   }
