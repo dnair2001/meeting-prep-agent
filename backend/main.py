@@ -94,7 +94,8 @@ def callback(request: Request, code: str, state: str = None):
         "client_secret": os.getenv("GOOGLE_CLIENT_SECRET"),
         "token_uri": "https://oauth2.googleapis.com/token",
     })
-    return RedirectResponse("http://localhost:3000/meetings")
+    frontend_url = os.getenv("FRONTEND_URL", "http://localhost:3000")
+    return RedirectResponse(f"{frontend_url}/meetings")
     
 @app.get("/auth/token")
 def get_token():
