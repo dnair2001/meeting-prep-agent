@@ -117,7 +117,7 @@ def list_meetings():
     return {"meetings": meetings}
 
 @app.post("/meetings/{event_id}/brief")
-def generate_brief(event_id: str):
+async def generate_brief(event_id: str):
     creds = load_credentials()
     if not creds:
         return {"error": "Not authenticated"}
@@ -125,5 +125,5 @@ def generate_brief(event_id: str):
     event = next((m for m in meetings if m["id"] == event_id), None)
     if not event:
         return {"error": "Event not found"}
-    brief = run_meeting_prep_agent(event_id, event, creds)
+    brief = await run_meeting_prep_agent(event_id, event, creds)
     return {"brief": brief}

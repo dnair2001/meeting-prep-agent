@@ -1,9 +1,10 @@
 import anthropic
+import asyncio
 import json
 from .calendar_service import get_upcoming_meetings
 from .gmail_service import get_recent_threads
 
-client = anthropic.Anthropic()
+client = anthropic.AsyncAnthropic()
 
 TOOLS = [
     {
@@ -51,20 +52,21 @@ TOOLS = [
     },
 ]
 
-def execute_tool(tool_name: str, tool_input: dict, creds_dict: dict, event_data: dict):
+async def execute_tool(tool_name: str, tool_input: dict, creds_dict: dict, event_data: dict):
     print(f"  -> Executing tool: {tool_name} with input: {tool_input}")
 
     if tool_name == "get_calendar_event":
         return event_data
 
     elif tool_name == "get_gmail_threads":
-        threads = get_recent_threads(creds_dict, tool_input["attendee_emails"])
-        return threads
+        # googleapiclient is sync — offload to a thread so it doesn't block the event loop
+        return await asyncio.to_thread(
+            get_recent_threads, creds_dict, tool_input["attendee_emails"]
+        )
 
     elif tool_name == "search_web":
-        # Sub-call to Claude with web search enabled
-        sub_client = anthropic.Anthropic()
-        result = sub_client.messages.create(
+        # Sub-call to Claude with web search enabled (async — runs concurrently with sibling tool calls)
+        result = await client.messages.create(
             model="claude-sonnet-4-20250514",
             max_tokens=500,
             tools=[{"type": "web_search_20250305", "name": "web_search"}],
@@ -77,7 +79,7 @@ def execute_tool(tool_name: str, tool_input: dict, creds_dict: dict, event_data:
 
     return "Unknown tool"
 
-def run_meeting_prep_agent(event_id: str, event_data: dict, creds_dict: dict) -> str:
+async def run_meeting_prep_agent(event_id: str, event_data: dict, creds_dict: dict) -> str:
     system_prompt = """You are a meeting preparation assistant. Given a calendar event,
 you research the attendees and context, then produce a concise meeting brief.
 
@@ -109,7 +111,7 @@ Use your tools to research the attendees and pull recent email context, then wri
 
     # Agent loop
     while True:
-        response = client.messages.create(
+        response = await client.messages.create(
             model="claude-sonnet-4-20250514",
             max_tokens=2000,
             system=system_prompt,
@@ -129,22 +131,23 @@ Use your tools to research the attendees and pull recent email context, then wri
                     return block.text
             return "No brief generated"
 
-        # Claude wants to use tools — execute all of them
+        # Claude wants to use tools — fan out all tool calls in parallel
         if response.stop_reason == "tool_use":
-            tool_results = []
-            for block in response.content:
-                if block.type == "tool_use":
-                    result = execute_tool(
-                        block.name,
-                        block.input,
-                        creds_dict,
-                        event_data,
-                    )
-                    tool_results.append({
-                        "type": "tool_result",
-                        "tool_use_id": block.id,
-                        "content": json.dumps(result),
-                    })
+            tool_use_blocks = [b for b in response.content if b.type == "tool_use"]
+
+            results = await asyncio.gather(*[
+                execute_tool(b.name, b.input, creds_dict, event_data)
+                for b in tool_use_blocks
+            ])
+
+            tool_results = [
+                {
+                    "type": "tool_result",
+                    "tool_use_id": b.id,
+                    "content": json.dumps(r),
+                }
+                for b, r in zip(tool_use_blocks, results)
+            ]
 
             # Send all results back in one user turn
             messages.append({"role": "user", "content": tool_results})

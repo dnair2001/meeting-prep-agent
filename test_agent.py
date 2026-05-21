@@ -1,4 +1,5 @@
 import sys
+import asyncio
 import httpx
 sys.path.insert(0, "backend")
 
@@ -29,7 +30,7 @@ meeting = meetings[0]
 print(f"Generating brief for: {meeting['title']}")
 print(f"Attendees: {meeting['attendees']}\n")
 
-brief = run_meeting_prep_agent(meeting["id"], meeting, CREDS)
+brief = asyncio.run(run_meeting_prep_agent(meeting["id"], meeting, CREDS))
 
 print("\n" + "=" * 50)
 print("MEETING BRIEF")
