@@ -1,0 +1,21 @@
+name: keep-warm
+
+# Pings the Render free-tier backend so it doesn't spin down after ~15 min idle,
+# which otherwise makes the first "Sign in with Google" click hang ~30-60s on a cold start.
+on:
+  schedule:
+    # Every 10 minutes. GitHub's scheduler drifts under load, so 10 leaves
+    # buffer under Render's ~15 min spin-down window.
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping /health
+        run: |
+          curl --fail --silent --show-error \
+            --retry 3 --retry-all-errors --retry-delay 10 \
+            --max-time 90 \
+            https://meeting-prep-agent-cn0m.onrender.com/health
