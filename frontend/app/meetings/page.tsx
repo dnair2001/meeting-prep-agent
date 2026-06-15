@@ -48,9 +48,13 @@ export default function MeetingsPage() {
   const [error, setError] = useState<string>("");
 
   useEffect(() => {
-    fetch(`${process.env.NEXT_PUBLIC_API_URL}/meetings`)
+    fetch(`${process.env.NEXT_PUBLIC_API_URL}/meetings`, { credentials: "include" })
       .then((r) => r.json())
       .then((d) => {
+        if (d.reauth_required) {
+          window.location.href = "/";
+          return;
+        }
         if (d.meetings) setMeetings(d.meetings);
         else if (d.error) setError(d.detail ? `${d.error}: ${d.detail}` : d.error);
       })
@@ -62,9 +66,13 @@ export default function MeetingsPage() {
     setSelected(meeting);
     setBrief("");
     setLoading(true);
-    const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/meetings/${meeting.id}/brief`, { method: "POST" });
+    const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/meetings/${meeting.id}/brief`, { method: "POST", credentials: "include" });
     const data = await res.json();
-    setBrief(data.brief);
+    if (data.reauth_required) {
+      window.location.href = "/";
+      return;
+    }
+    setBrief(data.brief || data.error || "");
     setLoading(false);
   }
 

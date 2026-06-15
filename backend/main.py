@@ -1,10 +1,15 @@
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import RedirectResponse
+from fastapi.responses import RedirectResponse, JSONResponse
 from google_auth_oauthlib.flow import Flow
-from google.oauth2.credentials import Credentials
+from google.auth.exceptions import RefreshError
 from dotenv import load_dotenv
-from services.token_store import save_credentials, load_credentials
+from services.token_store import (
+    encode_value,
+    decode_value,
+    COOKIE_NAME,
+    PKCE_COOKIE_NAME,
+)
 from services.calendar_service import get_upcoming_meetings
 from services.agent_service import run_meeting_prep_agent
 import os
@@ -41,8 +46,10 @@ SCOPES = [
     "https://www.googleapis.com/auth/gmail.readonly",
 ]
 
-# In-memory store only for the code verifier (used during OAuth flow)
-_state_store = {}
+# Frontend (Vercel) and backend (Render) are different sites, so the auth
+# cookies are cross-site: they must be SameSite=None and Secure to be sent.
+_COOKIE_KW = dict(httponly=True, secure=True, samesite="none")
+
 
 def generate_code_verifier():
     return secrets.token_urlsafe(32)
@@ -66,19 +73,31 @@ def make_flow():
         redirect_uri=os.getenv("GOOGLE_REDIRECT_URI"),
     )
 
+
+def _load_creds(request: Request):
+    return decode_value(request.cookies.get(COOKIE_NAME))
+
+
+def _reauth_response(message: str = "Session expired, please sign in again."):
+    """Tell the frontend to restart the OAuth flow and drop the stale cookie."""
+    resp = JSONResponse({"error": message, "reauth_required": True}, status_code=401)
+    resp.delete_cookie(COOKIE_NAME, secure=True, samesite="none")
+    return resp
+
+
 @app.get("/auth/credentials")
-def get_credentials():
-    creds = load_credentials()
+def get_credentials(request: Request):
+    creds = _load_creds(request)
     if not creds:
-        return {"error": "Not authenticated"}
-    return creds
+        return JSONResponse({"authenticated": False}, status_code=401)
+    # Never echo the client secret / tokens back to the browser.
+    return {"authenticated": True}
 
 @app.get("/auth/login")
 def login():
     flow = make_flow()
     code_verifier = generate_code_verifier()
     code_challenge = generate_code_challenge(code_verifier)
-    _state_store["code_verifier"] = code_verifier
     auth_url, state = flow.authorization_url(
         access_type="offline",
         include_granted_scopes="true",
@@ -86,34 +105,44 @@ def login():
         code_challenge=code_challenge,
         code_challenge_method="S256",
     )
-    return {"auth_url": auth_url}
+    resp = JSONResponse({"auth_url": auth_url})
+    # Carry the PKCE verifier in a short-lived signed cookie so the callback can
+    # read it even if a different worker/instance handles it (the old in-memory
+    # store broke whenever Render restarted between login and callback).
+    resp.set_cookie(PKCE_COOKIE_NAME, encode_value(code_verifier), max_age=600, **_COOKIE_KW)
+    return resp
 
 @app.get("/auth/callback")
 def callback(request: Request, code: str, state: str = None):
+    frontend_url = os.getenv("FRONTEND_URL", "http://localhost:3000")
     try:
         flow = make_flow()
-        code_verifier = _state_store.get("code_verifier")
+        code_verifier = decode_value(request.cookies.get(PKCE_COOKIE_NAME))
         flow.fetch_token(code=code, code_verifier=code_verifier)
         creds = flow.credentials
-        save_credentials({
-            "token": creds.token,
-            "refresh_token": creds.refresh_token,
-            "client_id": os.getenv("GOOGLE_CLIENT_ID"),
-            "client_secret": os.getenv("GOOGLE_CLIENT_SECRET"),
-            "token_uri": "https://oauth2.googleapis.com/token",
-        })
     except Exception:
-        # Surface the real traceback in the Render logs instead of a blank 500.
+        # Surface the real traceback in the Render logs, then send the user back
+        # to the start instead of showing a blank 500.
         traceback.print_exc()
-        raise
-    frontend_url = os.getenv("FRONTEND_URL", "http://localhost:3000")
-    return RedirectResponse(f"{frontend_url}/meetings")
-    
+        return RedirectResponse(f"{frontend_url}/?error=auth_failed")
+
+    creds_dict = {
+        "token": creds.token,
+        "refresh_token": creds.refresh_token,
+        "client_id": os.getenv("GOOGLE_CLIENT_ID"),
+        "client_secret": os.getenv("GOOGLE_CLIENT_SECRET"),
+        "token_uri": "https://oauth2.googleapis.com/token",
+    }
+    resp = RedirectResponse(f"{frontend_url}/meetings")
+    resp.set_cookie(COOKIE_NAME, encode_value(creds_dict), max_age=60 * 60 * 24 * 30, **_COOKIE_KW)
+    resp.delete_cookie(PKCE_COOKIE_NAME, secure=True, samesite="none")
+    return resp
+
 @app.get("/auth/token")
-def get_token():
-    creds = load_credentials()
+def get_token(request: Request):
+    creds = _load_creds(request)
     if not creds:
-        return {"error": "Not authenticated"}
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
     return {"token": creds["token"]}
 
 @app.get("/health")
@@ -121,27 +150,37 @@ def health():
     return {"status": "ok"}
 
 @app.get("/meetings")
-def list_meetings():
-    creds = load_credentials()
+def list_meetings(request: Request):
+    creds = _load_creds(request)
     if not creds:
-        return {"error": "Not authenticated"}
+        return _reauth_response("Not authenticated")
     try:
         meetings = get_upcoming_meetings(creds, hours_ahead=72)
-    except Exception as e:
-        # Print the full traceback to the Render logs and return the message
-        # to the client so the failure is visible instead of a blank 500.
+    except RefreshError:
+        # The stored Google token can no longer be refreshed (revoked, or a
+        # Testing-mode refresh token that expired after 7 days). Re-auth.
         traceback.print_exc()
-        return {"error": "Failed to load meetings", "detail": str(e)}
+        return _reauth_response()
+    except Exception as e:
+        traceback.print_exc()
+        return JSONResponse({"error": "Failed to load meetings", "detail": str(e)}, status_code=500)
     return {"meetings": meetings}
 
 @app.post("/meetings/{event_id}/brief")
-async def generate_brief(event_id: str):
-    creds = load_credentials()
+async def generate_brief(event_id: str, request: Request):
+    creds = _load_creds(request)
     if not creds:
-        return {"error": "Not authenticated"}
-    meetings = get_upcoming_meetings(creds, hours_ahead=72)
-    event = next((m for m in meetings if m["id"] == event_id), None)
-    if not event:
-        return {"error": "Event not found"}
-    brief = await run_meeting_prep_agent(event_id, event, creds)
+        return _reauth_response("Not authenticated")
+    try:
+        meetings = get_upcoming_meetings(creds, hours_ahead=72)
+        event = next((m for m in meetings if m["id"] == event_id), None)
+        if not event:
+            return JSONResponse({"error": "Event not found"}, status_code=404)
+        brief = await run_meeting_prep_agent(event_id, event, creds)
+    except RefreshError:
+        traceback.print_exc()
+        return _reauth_response()
+    except Exception as e:
+        traceback.print_exc()
+        return JSONResponse({"error": "Failed to generate brief", "detail": str(e)}, status_code=500)
     return {"brief": brief}

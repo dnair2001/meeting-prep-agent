@@ -8,7 +8,7 @@ export default function Home() {
   async function handleLogin() {
     setLoading(true);
     try {
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/auth/login`);
+      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/auth/login`, { credentials: "include" });
       const data = await res.json();
       window.location.href = data.auth_url;
     } catch {
