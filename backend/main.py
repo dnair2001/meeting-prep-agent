@@ -125,7 +125,13 @@ def list_meetings():
     creds = load_credentials()
     if not creds:
         return {"error": "Not authenticated"}
-    meetings = get_upcoming_meetings(creds, hours_ahead=72)
+    try:
+        meetings = get_upcoming_meetings(creds, hours_ahead=72)
+    except Exception as e:
+        # Print the full traceback to the Render logs and return the message
+        # to the client so the failure is visible instead of a blank 500.
+        traceback.print_exc()
+        return {"error": "Failed to load meetings", "detail": str(e)}
     return {"meetings": meetings}
 
 @app.post("/meetings/{event_id}/brief")

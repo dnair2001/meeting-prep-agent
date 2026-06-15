@@ -45,14 +45,17 @@ export default function MeetingsPage() {
   const [brief, setBrief] = useState<string>("");
   const [loading, setLoading] = useState(false);
   const [fetchingMeetings, setFetchingMeetings] = useState(true);
+  const [error, setError] = useState<string>("");
 
   useEffect(() => {
     fetch(`${process.env.NEXT_PUBLIC_API_URL}/meetings`)
       .then((r) => r.json())
       .then((d) => {
         if (d.meetings) setMeetings(d.meetings);
-        setFetchingMeetings(false);
-      });
+        else if (d.error) setError(d.detail ? `${d.error}: ${d.detail}` : d.error);
+      })
+      .catch((e) => setError(`Could not reach the server: ${e.message}`))
+      .finally(() => setFetchingMeetings(false));
   }, []);
 
   async function generateBrief(meeting: Meeting) {
@@ -101,7 +104,11 @@ export default function MeetingsPage() {
             <div style={{ padding: "0.5rem 0.25rem", fontSize: 13, color: "rgba(240,237,232,0.2)", fontWeight: 300 }}>Loading...</div>
           )}
 
-          {!fetchingMeetings && meetings.length === 0 && (
+          {!fetchingMeetings && error && (
+            <div style={{ padding: "0.75rem", fontSize: 12, color: "rgba(248,180,180,0.85)", fontWeight: 300, lineHeight: 1.5, background: "rgba(248,113,113,0.06)", border: "1px solid rgba(248,113,113,0.15)", borderRadius: 10 }}>{error}</div>
+          )}
+
+          {!fetchingMeetings && !error && meetings.length === 0 && (
             <div style={{ padding: "0.5rem 0.25rem", fontSize: 13, color: "rgba(240,237,232,0.2)", fontWeight: 300 }}>No upcoming meetings</div>
           )}
 
