@@ -11,6 +11,13 @@ import os
 import secrets
 import hashlib
 import base64
+import traceback
+
+# Google returns the granted scopes in a different order (and sometimes adds
+# extras) than we requested, especially once "openid" is involved. Without this,
+# requests-oauthlib raises "Scope has changed" during fetch_token and the
+# callback 500s. Must be set before the OAuth flow runs.
+os.environ.setdefault("OAUTHLIB_RELAX_TOKEN_SCOPE", "1")
 
 load_dotenv()
 
@@ -83,17 +90,22 @@ def login():
 
 @app.get("/auth/callback")
 def callback(request: Request, code: str, state: str = None):
-    flow = make_flow()
-    code_verifier = _state_store.get("code_verifier")
-    flow.fetch_token(code=code, code_verifier=code_verifier)
-    creds = flow.credentials
-    save_credentials({
-        "token": creds.token,
-        "refresh_token": creds.refresh_token,
-        "client_id": os.getenv("GOOGLE_CLIENT_ID"),
-        "client_secret": os.getenv("GOOGLE_CLIENT_SECRET"),
-        "token_uri": "https://oauth2.googleapis.com/token",
-    })
+    try:
+        flow = make_flow()
+        code_verifier = _state_store.get("code_verifier")
+        flow.fetch_token(code=code, code_verifier=code_verifier)
+        creds = flow.credentials
+        save_credentials({
+            "token": creds.token,
+            "refresh_token": creds.refresh_token,
+            "client_id": os.getenv("GOOGLE_CLIENT_ID"),
+            "client_secret": os.getenv("GOOGLE_CLIENT_SECRET"),
+            "token_uri": "https://oauth2.googleapis.com/token",
+        })
+    except Exception:
+        # Surface the real traceback in the Render logs instead of a blank 500.
+        traceback.print_exc()
+        raise
     frontend_url = os.getenv("FRONTEND_URL", "http://localhost:3000")
     return RedirectResponse(f"{frontend_url}/meetings")
     
