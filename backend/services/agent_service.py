@@ -67,7 +67,7 @@ async def execute_tool(tool_name: str, tool_input: dict, creds_dict: dict, event
     elif tool_name == "search_web":
         # Sub-call to Claude with web search enabled (async — runs concurrently with sibling tool calls)
         result = await client.messages.create(
-            model="claude-sonnet-4-20250514",
+            model="claude-sonnet-5",
             max_tokens=500,
             tools=[{"type": "web_search_20250305", "name": "web_search"}],
             messages=[{"role": "user", "content": tool_input["query"]}],
@@ -112,7 +112,7 @@ Use your tools to research the attendees and pull recent email context, then wri
     # Agent loop
     while True:
         response = await client.messages.create(
-            model="claude-sonnet-4-20250514",
+            model="claude-sonnet-5",
             max_tokens=2000,
             system=system_prompt,
             tools=TOOLS,
